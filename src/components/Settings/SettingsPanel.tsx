@@ -1,6 +1,7 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState } from 'react';
 import clsx from 'clsx';
-import { CheckCircle2, XCircle, Loader2, RotateCcw, Download, Upload, MonitorPlay, MonitorOff, Tv2 } from 'lucide-react';
+import { CheckCircle2, XCircle, Loader2, RotateCcw, Download, Upload, MonitorPlay, MonitorOff, Tv2, Monitor } from 'lucide-react';
+import { useScreenManager } from '../../hooks/useScreenManager';
 import { useStore } from '../../store/useStore';
 import { CATEGORY_CONFIGS } from '../../types';
 import type { RSSCategory } from '../../types';
@@ -41,46 +42,17 @@ export default function SettingsPanel() {
   const [proxyStatus, setProxyStatus] = useState<'idle' | 'testing' | 'ok' | 'error'>('idle');
   const [resetConfirm, setResetConfirm] = useState(false);
   const [popupBlocked, setPopupBlocked] = useState(false);
-
-  // Popout window handle — not stored in Zustand (Window is not serialisable)
-  const popoutRef = useRef<Window | null>(null);
-  const [isPopoutOpen, setIsPopoutOpen] = useState(false);
-
-  // Poll to detect if the user closed the popout externally
-  useEffect(() => {
-    const id = setInterval(() => {
-      if (popoutRef.current?.closed) {
-        popoutRef.current = null;
-        setIsPopoutOpen(false);
-      }
-    }, 1000);
-    return () => clearInterval(id);
-  }, []);
+  const sm = useScreenManager();
 
   const launchPopout = () => {
-    if (popoutRef.current && !popoutRef.current.closed) {
-      popoutRef.current.focus();
-      return;
-    }
     const h = Math.round(settings.tickerPopoutFontSize * 2.6) + 2;
-    const top = settings.tickerPopoutPosition === 'bottom'
-      ? window.screen.availHeight - h
-      : 0;
-    const win = window.open(
-      '/ticker.html',
-      'rss-ticker-popout',
-      `popup,width=${window.screen.availWidth},height=${h},left=0,top=${top}`
-    );
-    if (!win) { setPopupBlocked(true); return; }
-    setPopupBlocked(false);
-    popoutRef.current = win;
-    setIsPopoutOpen(true);
-  };
-
-  const closePopout = () => {
-    popoutRef.current?.close();
-    popoutRef.current = null;
-    setIsPopoutOpen(false);
+    const ok = sm.launchPopout({
+      url:         '/ticker.html',
+      screenIndex: settings.tickerPopoutScreenIndex ?? -1,
+      position:    settings.tickerPopoutPosition ?? 'bottom',
+      height:      h,
+    });
+    setPopupBlocked(!ok);
   };
 
   const togglePopoutCategory = (cat: RSSCategory) => {
@@ -211,6 +183,50 @@ export default function SettingsPanel() {
                 <span className="font-ui font-bold text-xs text-brand uppercase tracking-widest">Popout Display — TV / External Monitor</span>
               </div>
 
+              {/* Monitor selector — Window Management API (Chrome 100+) */}
+              {sm.supported && (
+                <div className="mb-4 space-y-2">
+                  {sm.permissionState === 'prompt' && (
+                    <button
+                      onClick={sm.requestAccess}
+                      className="w-full flex items-center justify-center gap-2 py-2 rounded border border-dashed border-[var(--border)] text-[var(--text-muted)] hover:border-brand/40 hover:text-brand text-xs font-ui font-semibold transition-colors"
+                    >
+                      <Monitor size={13} /> Detect Monitors
+                    </button>
+                  )}
+                  {sm.permissionState === 'granted' && sm.screens.length > 0 && (
+                    <div className="flex items-center justify-between py-2 border-b border-[var(--border)]">
+                      <div>
+                        <div className="font-ui font-semibold text-sm text-[var(--text-primary)]">Target Monitor</div>
+                        <div className="font-ui text-xs text-[var(--text-muted)] mt-0.5">
+                          {sm.screens.length} display{sm.screens.length !== 1 ? 's' : ''} detected
+                        </div>
+                      </div>
+                      <select
+                        value={settings.tickerPopoutScreenIndex ?? -1}
+                        onChange={e => updateSettings({ tickerPopoutScreenIndex: Number(e.target.value) })}
+                        className="cyber-input text-sm ml-6 max-w-[220px]"
+                      >
+                        <option value={-1}>Primary (default)</option>
+                        {sm.screens.map(s => (
+                          <option key={s.index} value={s.index}>
+                            {s.label}
+                            {s.isPrimary ? ' ★' : ''}
+                            {s.isInternal ? ' (Built-in)' : ' (External)'}
+                            {` — ${s.availWidth}×${s.availHeight}`}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                  {sm.permissionState === 'denied' && (
+                    <div className="text-xs font-ui text-[var(--text-muted)] bg-[var(--bg-secondary)] border border-[var(--border)] rounded px-3 py-2">
+                      Monitor access denied — ticker will open on the primary display.
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Launch / Close button */}
               <div className="mb-4">
                 {popupBlocked && (
@@ -223,18 +239,18 @@ export default function SettingsPanel() {
                     onClick={launchPopout}
                     className={clsx(
                       'flex-1 flex items-center justify-center gap-2 py-2 rounded border font-ui font-semibold text-sm transition-colors',
-                      isPopoutOpen
+                      sm.isPopoutOpen
                         ? 'border-brand/40 bg-brand/10 text-brand hover:bg-brand/20'
                         : 'border-[var(--border)] text-[var(--text-primary)] hover:border-brand/40 hover:text-brand'
                     )}
                   >
-                    {isPopoutOpen
+                    {sm.isPopoutOpen
                       ? <><span className="w-2 h-2 rounded-full bg-brand animate-pulse" /> Ticker Window Open — Click to Focus</>
                       : <><MonitorPlay size={14} /> Launch Ticker Window</>
                     }
                   </button>
-                  {isPopoutOpen && (
-                    <button onClick={closePopout} className="px-3 py-2 rounded border border-red-500/30 text-red-400 hover:bg-red-500/10 transition-colors" title="Close ticker window">
+                  {sm.isPopoutOpen && (
+                    <button onClick={sm.closePopout} className="px-3 py-2 rounded border border-red-500/30 text-red-400 hover:bg-red-500/10 transition-colors" title="Close ticker window">
                       <MonitorOff size={14} />
                     </button>
                   )}
