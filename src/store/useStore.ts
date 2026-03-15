@@ -45,6 +45,10 @@ interface AppState {
   isFetching: boolean;
   error: string | null;
 
+  // Archive
+  archiveResults: RSSItem[];
+  archiveQuery: string;
+
   // Feed CRUD
   addFeed: (feed: Omit<RSSFeed, 'id' | 'lastFetched' | 'lastError' | 'itemCount'>) => void;
   removeFeed: (id: string) => void;
@@ -65,7 +69,6 @@ interface AppState {
   // Settings
   updateSettings: (updates: Partial<RSSSettings>) => void;
   resetSettings: () => void;
-  loadSettings: () => void;
 
   // Profile
   updateProfile: (updates: Partial<UserProfile>) => void;
@@ -90,6 +93,9 @@ interface AppState {
 
   // Stats
   computeStats: () => void;
+
+  // Archive search
+  searchArchive: (query: string, category?: RSSCategory | null) => Promise<void>;
 }
 
 const DEFAULT_PROFILE: UserProfile = {
@@ -109,6 +115,35 @@ const DEFAULT_UI: UIState = {
   selectedItemId: null, sidebarCollapsed: false, detailPaneOpen: false,
 };
 
+// ── Raw-item shape returned by the proxy ─────────────────────────────────────
+interface RawItem {
+  title?: string;
+  link?: string;
+  guid?: string;
+  pubDate?: string;
+  description?: string;
+}
+
+/** Map a proxy raw item onto an RSSItem, preserving existing read/star/saved. */
+function mapRawItem(raw: RawItem, feed: RSSFeed, existingMap: Map<string, RSSItem>): RSSItem {
+  const link = raw.link || raw.guid || '';
+  const id = makeItemId(feed.id, link);
+  const existing = existingMap.get(id);
+  return {
+    id,
+    feedId: feed.id,
+    feedName: feed.name,
+    title: raw.title || 'Untitled',
+    link,
+    pubDate: raw.pubDate || new Date().toISOString(),
+    description: raw.description || '',
+    category: feed.category,
+    read: existing?.read ?? false,
+    starred: existing?.starred ?? false,
+    saved: existing?.saved ?? false,
+  };
+}
+
 export const useStore = create<AppState>()(
   persist(
     (set, get) => ({
@@ -122,6 +157,8 @@ export const useStore = create<AppState>()(
       isLoading: false,
       isFetching: false,
       error: null,
+      archiveResults: [],
+      archiveQuery: '',
 
       // ── Feed CRUD ────────────────────────────────────────────────
       addFeed: (feedData) => {
@@ -204,7 +241,9 @@ export const useStore = create<AppState>()(
         const enabledFeeds = feeds.filter(f => f.enabled);
         const newItems: RSSItem[] = [];
         const updatedFeeds = [...feeds];
-        let failedCount = 0;
+
+        // Build lookup map once before the concurrent fetch loop (O(1) per item)
+        const existingMap = new Map(get().items.map(i => [i.id, i]));
 
         await Promise.allSettled(
           enabledFeeds.map(async (feed) => {
@@ -218,36 +257,22 @@ export const useStore = create<AppState>()(
               const data = await res.json();
               if (!data.success) throw new Error(data.error || 'Parse failed');
 
-              const items: RSSItem[] = (data.items || []).slice(0, settings.maxItemsPerFeed).map((raw: {
-                title?: string; link?: string; guid?: string; pubDate?: string; description?: string;
-              }) => {
-                const link = raw.link || raw.guid || '';
-                const id = makeItemId(feed.id, link);
-                // Preserve read/star/saved state from existing items
-                const existing = get().items.find(i => i.id === id);
-                return {
-                  id,
-                  feedId: feed.id,
-                  feedName: feed.name,
-                  title: raw.title || 'Untitled',
-                  link,
-                  pubDate: raw.pubDate || new Date().toISOString(),
-                  description: raw.description || '',
-                  category: feed.category,
-                  read: existing?.read ?? false,
-                  starred: existing?.starred ?? false,
-                  saved: existing?.saved ?? false,
-                };
-              });
+              const items = (data.items as RawItem[] || [])
+                .slice(0, settings.maxItemsPerFeed)
+                .map(raw => mapRawItem(raw, feed, existingMap));
 
               newItems.push(...items);
 
               const idx = updatedFeeds.findIndex(f => f.id === feed.id);
               if (idx !== -1) {
-                updatedFeeds[idx] = { ...updatedFeeds[idx], lastFetched: Date.now(), lastError: null, itemCount: items.length };
+                updatedFeeds[idx] = {
+                  ...updatedFeeds[idx],
+                  lastFetched: Date.now(),
+                  lastError: null,
+                  itemCount: items.length,
+                };
               }
             } catch (err) {
-              failedCount++;
               const idx = updatedFeeds.findIndex(f => f.id === feed.id);
               if (idx !== -1) {
                 updatedFeeds[idx] = {
@@ -259,11 +284,15 @@ export const useStore = create<AppState>()(
           })
         );
 
-        // Merge: keep existing read/star state, dedup by id
-        const existingMap = new Map(get().items.map(i => [i.id, i]));
+        // Merge new items into the existing map (new wins for content, old wins for read/star/saved)
         for (const item of newItems) {
           const existing = existingMap.get(item.id);
-          existingMap.set(item.id, existing ? { ...item, read: existing.read, starred: existing.starred, saved: existing.saved } : item);
+          existingMap.set(
+            item.id,
+            existing
+              ? { ...item, read: existing.read, starred: existing.starred, saved: existing.saved }
+              : item
+          );
         }
 
         const allItems = Array.from(existingMap.values())
@@ -272,18 +301,84 @@ export const useStore = create<AppState>()(
 
         set({ feeds: updatedFeeds, items: allItems, isFetching: false });
         get().computeStats();
+
+        // Fire-and-forget: persist newly fetched items to SQLite archive
+        if (newItems.length > 0) {
+          fetch(`${settings.proxyUrl}/api/articles/save`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ items: newItems }),
+          }).catch(() => { /* non-critical — archive save failure doesn't block the UI */ });
+        }
       },
 
+      /** Fetch a single feed without refreshing the rest. */
       refreshFeed: async (feedId) => {
-        const feed = get().feeds.find(f => f.id === feedId);
+        const { feeds, settings } = get();
+        const feed = feeds.find(f => f.id === feedId);
         if (!feed) return;
-        await get().fetchAllFeeds();
+
+        const existingMap = new Map(get().items.map(i => [i.id, i]));
+
+        try {
+          const res = await fetch(`${settings.proxyUrl}/api/rss/parse`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: feed.url }),
+            signal: AbortSignal.timeout(12000),
+          });
+          const data = await res.json();
+          if (!data.success) throw new Error(data.error || 'Parse failed');
+
+          const newItems = (data.items as RawItem[] || [])
+            .slice(0, settings.maxItemsPerFeed)
+            .map(raw => mapRawItem(raw, feed, existingMap));
+
+          for (const item of newItems) {
+            const existing = existingMap.get(item.id);
+            existingMap.set(
+              item.id,
+              existing
+                ? { ...item, read: existing.read, starred: existing.starred, saved: existing.saved }
+                : item
+            );
+          }
+
+          const allItems = Array.from(existingMap.values())
+            .sort((a, b) => new Date(b.pubDate).getTime() - new Date(a.pubDate).getTime())
+            .slice(0, 2000);
+
+          set(s => ({
+            feeds: s.feeds.map(f =>
+              f.id === feedId
+                ? { ...f, lastFetched: Date.now(), lastError: null, itemCount: newItems.length }
+                : f
+            ),
+            items: allItems,
+          }));
+          get().computeStats();
+
+          if (newItems.length > 0) {
+            fetch(`${settings.proxyUrl}/api/articles/save`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ items: newItems }),
+            }).catch(() => {});
+          }
+        } catch (err) {
+          set(s => ({
+            feeds: s.feeds.map(f =>
+              f.id === feedId
+                ? { ...f, lastError: err instanceof Error ? err.message : 'Fetch failed' }
+                : f
+            ),
+          }));
+        }
       },
 
       // ── Settings ─────────────────────────────────────────────────
       updateSettings: (updates) => set(s => ({ settings: { ...s.settings, ...updates } })),
       resetSettings: () => set({ settings: DEFAULT_SETTINGS }),
-      loadSettings: () => { /* hydrated by persist middleware */ },
 
       // ── Profile ──────────────────────────────────────────────────
       updateProfile: (updates) => set(s => ({ profile: { ...s.profile, ...updates } })),
@@ -330,7 +425,6 @@ export const useStore = create<AppState>()(
             });
           }
         });
-        get().computeStats();
       },
       importJSON: (json) => {
         const data = parseJSON(json);
@@ -347,7 +441,6 @@ export const useStore = create<AppState>()(
           });
         }
         if (data.settings) get().updateSettings(data.settings);
-        get().computeStats();
       },
 
       // ── Stats ────────────────────────────────────────────────────
@@ -365,6 +458,43 @@ export const useStore = create<AppState>()(
             failedFeeds: feeds.filter(f => f.lastError !== null).length,
           },
         });
+      },
+
+      // ── Archive search ───────────────────────────────────────────
+      searchArchive: async (query, category = null) => {
+        const { settings } = get();
+        set({ archiveQuery: query });
+        if (!query.trim()) {
+          set({ archiveResults: [] });
+          return;
+        }
+        try {
+          const params = new URLSearchParams({ q: query, limit: '50' });
+          if (category) params.set('category', category);
+          const res = await fetch(`${settings.proxyUrl}/api/search?${params}`);
+          const data = await res.json();
+          if (!data.success) throw new Error(data.error);
+          // Map archive rows back to RSSItem shape (excerpt stored in description for display)
+          const results: RSSItem[] = (data.results || []).map((r: {
+            id: string; feedId: string; feedName: string; category: RSSCategory;
+            title: string; link: string; pubDate: string; author?: string; excerpt?: string;
+          }) => ({
+            id: r.id,
+            feedId: r.feedId,
+            feedName: r.feedName,
+            title: r.title,
+            link: r.link,
+            pubDate: r.pubDate || '',
+            description: r.excerpt || '',
+            category: r.category,
+            read: true,    // archive items are treated as read
+            starred: false,
+            saved: false,
+          }));
+          set({ archiveResults: results });
+        } catch {
+          set({ archiveResults: [] });
+        }
       },
     }),
     {

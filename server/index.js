@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import { saveArticles, searchArticles, getArchiveStats } from './db.js';
 
 const app = express();
 const PORT = 3001;
@@ -7,50 +8,45 @@ const PORT = 3001;
 app.use(cors());
 app.use(express.json());
 
-// Simple XML parser helpers
+// ── XML parser helpers ────────────────────────────────────────────────────────
+
 function extractText(xml, tag) {
   const match = xml.match(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`, 'i'));
   return match ? match[1].replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1').trim() : '';
 }
 
-function extractAll(xml, tag) {
-  const regex = new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`, 'gi');
-  const results = [];
-  let match;
-  while ((match = regex.exec(xml)) !== null) {
-    results.push(match[1].replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1').trim());
-  }
-  return results;
-}
-
 function parseRSSItems(xml) {
   const items = [];
-  // Try RSS 2.0 items
+
+  // RSS 2.0
   const itemRegex = /<item[^>]*>([\s\S]*?)<\/item>/gi;
-  let itemMatch;
-  while ((itemMatch = itemRegex.exec(xml)) !== null) {
-    const itemXml = itemMatch[1];
-    const title = extractText(itemXml, 'title') || 'Untitled';
-    const link = extractText(itemXml, 'link') || extractText(itemXml, 'guid') || '';
-    const pubDate = extractText(itemXml, 'pubDate') || extractText(itemXml, 'dc:date') || '';
-    const description = extractText(itemXml, 'description') || extractText(itemXml, 'summary') || '';
-    const guid = extractText(itemXml, 'guid') || link;
-    items.push({ title, link, pubDate, description, guid });
+  let m;
+  while ((m = itemRegex.exec(xml)) !== null) {
+    const x = m[1];
+    const link = extractText(x, 'link') || extractText(x, 'guid') || '';
+    items.push({
+      title: extractText(x, 'title') || 'Untitled',
+      link,
+      pubDate: extractText(x, 'pubDate') || extractText(x, 'dc:date') || '',
+      description: extractText(x, 'description') || extractText(x, 'summary') || '',
+      guid: extractText(x, 'guid') || link,
+    });
   }
 
-  // Try Atom entries if no RSS items found
+  // Atom (fallback)
   if (items.length === 0) {
     const entryRegex = /<entry[^>]*>([\s\S]*?)<\/entry>/gi;
-    let entryMatch;
-    while ((entryMatch = entryRegex.exec(xml)) !== null) {
-      const entryXml = entryMatch[1];
-      const title = extractText(entryXml, 'title') || 'Untitled';
-      const linkMatch = entryXml.match(/<link[^>]*href=["']([^"']+)["'][^>]*\/?>/i);
-      const link = linkMatch ? linkMatch[1] : extractText(entryXml, 'id') || '';
-      const pubDate = extractText(entryXml, 'updated') || extractText(entryXml, 'published') || '';
-      const description = extractText(entryXml, 'summary') || extractText(entryXml, 'content') || '';
-      const guid = extractText(entryXml, 'id') || link;
-      items.push({ title, link, pubDate, description, guid });
+    while ((m = entryRegex.exec(xml)) !== null) {
+      const x = m[1];
+      const linkMatch = x.match(/<link[^>]*href=["']([^"']+)["'][^>]*\/?>/i);
+      const link = linkMatch ? linkMatch[1] : extractText(x, 'id') || '';
+      items.push({
+        title: extractText(x, 'title') || 'Untitled',
+        link,
+        pubDate: extractText(x, 'updated') || extractText(x, 'published') || '',
+        description: extractText(x, 'summary') || extractText(x, 'content') || '',
+        guid: extractText(x, 'id') || link,
+      });
     }
   }
 
@@ -58,70 +54,50 @@ function parseRSSItems(xml) {
 }
 
 function getFeedTitle(xml) {
-  // Try channel title first (RSS 2.0)
   const channelMatch = xml.match(/<channel[^>]*>([\s\S]*?)<\/channel>/i);
-  if (channelMatch) {
-    return extractText(channelMatch[1], 'title') || '';
-  }
-  // Try Atom feed title
+  if (channelMatch) return extractText(channelMatch[1], 'title') || '';
   const feedMatch = xml.match(/<feed[^>]*>([\s\S]*?)<\/feed>/i);
-  if (feedMatch) {
-    return extractText(feedMatch[1], 'title') || '';
-  }
+  if (feedMatch) return extractText(feedMatch[1], 'title') || '';
   return '';
 }
 
-// Parse RSS feed
+// ── Shared fetch helper ───────────────────────────────────────────────────────
+
+const SHARED_HEADERS = {
+  'User-Agent': 'RSS-Commander/1.0 (Security Feed Aggregator)',
+  'Accept': 'application/rss+xml, application/atom+xml, application/xml, text/xml, */*',
+};
+
+async function fetchAndParseXML(url, timeoutMs = 10000) {
+  const response = await fetch(url, {
+    headers: SHARED_HEADERS,
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+  }
+  const xml = await response.text();
+  return { xml, items: parseRSSItems(xml), feedTitle: getFeedTitle(xml) };
+}
+
+// ── Feed endpoints ────────────────────────────────────────────────────────────
+
 app.post('/api/rss/parse', async (req, res) => {
   const { url } = req.body;
   if (!url) return res.status(400).json({ success: false, error: 'URL required' });
-
   try {
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent': 'RSS-Commander/1.0 (Security Feed Aggregator)',
-        'Accept': 'application/rss+xml, application/atom+xml, application/xml, text/xml, */*',
-      },
-      signal: AbortSignal.timeout(10000),
-    });
-
-    if (!response.ok) {
-      return res.json({ success: false, error: `HTTP ${response.status}: ${response.statusText}` });
-    }
-
-    const xml = await response.text();
-    const items = parseRSSItems(xml);
-    const feedTitle = getFeedTitle(xml);
-
+    const { items, feedTitle } = await fetchAndParseXML(url, 10000);
     res.json({ success: true, items, feedTitle, itemCount: items.length });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Fetch failed';
-    res.json({ success: false, error: msg });
+    res.json({ success: false, error: err instanceof Error ? err.message : 'Fetch failed' });
   }
 });
 
-// Test a feed URL (returns preview)
 app.post('/api/rss/test', async (req, res) => {
   const { url } = req.body;
   if (!url) return res.status(400).json({ success: false, error: 'URL required' });
-
   try {
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent': 'RSS-Commander/1.0',
-        'Accept': 'application/rss+xml, application/atom+xml, application/xml, text/xml, */*',
-      },
-      signal: AbortSignal.timeout(8000),
-    });
-
-    if (!response.ok) {
-      return res.json({ success: false, error: `HTTP ${response.status}` });
-    }
-
-    const xml = await response.text();
-    const items = parseRSSItems(xml);
-    const feedTitle = getFeedTitle(xml);
-
+    const { items, feedTitle } = await fetchAndParseXML(url, 8000);
     res.json({
       success: true,
       feedTitle,
@@ -133,14 +109,70 @@ app.post('/api/rss/test', async (req, res) => {
   }
 });
 
-// Health check
+// ── Archive endpoints ─────────────────────────────────────────────────────────
+
+/** Bulk-save articles after each fetch (fire-and-forget from client). */
+app.post('/api/articles/save', (req, res) => {
+  const { items } = req.body;
+  if (!Array.isArray(items)) return res.status(400).json({ success: false, error: 'items array required' });
+  try {
+    saveArticles(items.map(i => ({
+      id: i.id,
+      feedId: i.feedId,
+      feedName: i.feedName,
+      category: i.category,
+      title: i.title,
+      description: i.description || null,
+      link: i.link,
+      pubDate: i.pubDate || null,
+      author: i.author || null,
+    })));
+    res.json({ success: true, saved: items.length });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err instanceof Error ? err.message : 'DB error' });
+  }
+});
+
+/** FTS5 full-text search with optional category filter. */
+app.get('/api/search', (req, res) => {
+  const { q, category, limit = '50', offset = '0' } = req.query;
+  if (!q || String(q).trim().length === 0) {
+    return res.status(400).json({ success: false, error: 'q (search query) required' });
+  }
+  try {
+    const results = searchArticles(
+      String(q).trim(),
+      category ? String(category) : null,
+      Math.min(parseInt(limit, 10) || 50, 200),
+      parseInt(offset, 10) || 0,
+    );
+    res.json({ success: true, results, total: results.length });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err instanceof Error ? err.message : 'Search failed' });
+  }
+});
+
+/** Archive stats: total count, date range, per-category breakdown. */
+app.get('/api/articles/stats', (_req, res) => {
+  try {
+    res.json({ success: true, ...getArchiveStats() });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err instanceof Error ? err.message : 'DB error' });
+  }
+});
+
+// ── Health ────────────────────────────────────────────────────────────────────
+
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', service: 'RSS Commander Proxy', timestamp: Date.now() });
 });
 
 app.listen(PORT, () => {
   console.log(`\n🎖️  RSS Commander Proxy running on http://localhost:${PORT}`);
-  console.log(`   POST /api/rss/parse  — fetch & parse RSS feed`);
-  console.log(`   POST /api/rss/test   — test feed URL`);
-  console.log(`   GET  /api/health     — health check\n`);
+  console.log(`   POST /api/rss/parse        — fetch & parse RSS feed`);
+  console.log(`   POST /api/rss/test         — test feed URL (preview)`);
+  console.log(`   POST /api/articles/save    — bulk-archive articles`);
+  console.log(`   GET  /api/search?q=…       — FTS5 full-text search`);
+  console.log(`   GET  /api/articles/stats   — archive statistics`);
+  console.log(`   GET  /api/health           — health check\n`);
 });

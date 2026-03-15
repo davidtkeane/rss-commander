@@ -1,7 +1,7 @@
 export type RSSCategory = 'pentesting' | 'malware' | 'forensics' | 'news' | 'dataGov' | 'blockchain';
-export type ViewMode = 'dashboard' | 'ticker' | 'feeds' | 'settings' | 'profile' | 'vault';
+export type ViewMode = 'dashboard' | 'ticker' | 'feeds' | 'archive' | 'settings' | 'profile' | 'vault';
 export type ArticleLayout = 'cards' | 'list' | 'compact' | 'magazine';
-export type TickerSpeed = 'slow' | 'normal' | 'fast' | 'turbo';
+export type TickerSpeed = number; // 0 (very slow crawl) → 100 (fast)
 export type ThemeMode = 'dark' | 'darker' | 'midnight';
 export type SortOrder = 'newest' | 'oldest' | 'unread' | 'alpha';
 
@@ -101,6 +101,13 @@ export interface AppStats {
   failedFeeds: number;
 }
 
+export interface ArchiveStats {
+  total: number;
+  oldest: string | null;
+  newest: string | null;
+  byCategory: Record<string, number>;
+}
+
 export interface CategoryConfig {
   id: RSSCategory;
   name: string;
@@ -147,7 +154,7 @@ export const CATEGORY_CONFIGS: Record<RSSCategory, CategoryConfig> = {
 };
 
 export const DEFAULT_SETTINGS: RSSSettings = {
-  tickerEnabled: true, tickerSpeed: 'normal', tickerHeight: 'md',
+  tickerEnabled: true, tickerSpeed: 50, tickerHeight: 'md',
   tickerPauseOnHover: true, tickerShowCategory: true, tickerShowTime: true, tickerMaxItems: 50,
   articleLayout: 'cards', theme: 'darker', fontSize: 'md',
   showDescriptions: true, showReadTime: true,

@@ -4,7 +4,14 @@ import clsx from 'clsx';
 import { useStore } from '../../store/useStore';
 import { CATEGORY_CONFIGS } from '../../types';
 
-const SPEED_MAP = { slow: '80s', normal: '50s', fast: '28s', turbo: '14s' };
+// Map 0–100 → animation duration. 0 = 200s (crawl), 100 = 20s (fast).
+// Legacy string values from old localStorage are mapped via a fallback table.
+const LEGACY_SPEED: Record<string, number> = { slow: 25, normal: 50, fast: 75, turbo: 100 };
+function tickerDuration(speed: number | string): string {
+  const n = typeof speed === 'string' ? (LEGACY_SPEED[speed] ?? 50) : speed;
+  const clamped = Math.max(0, Math.min(100, n));
+  return `${Math.round(200 - clamped * 1.8)}s`; // 0→200s, 100→20s
+}
 
 interface Props { standalone?: boolean; }
 
@@ -69,7 +76,7 @@ export default function NewsTicker({ standalone }: Props) {
             ref={scrollRef}
             className={clsx('ticker-scroll', isPaused && 'paused')}
             style={{
-              '--ticker-duration': SPEED_MAP[settings.tickerSpeed],
+              '--ticker-duration': tickerDuration(settings.tickerSpeed),
               animationPlayState: isPaused ? 'paused' : 'running',
             } as React.CSSProperties}
             onMouseEnter={() => settings.tickerPauseOnHover && setIsPaused(true)}

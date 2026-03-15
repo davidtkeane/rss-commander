@@ -7,13 +7,13 @@ import SettingsPanel from './components/Settings/SettingsPanel';
 import UserProfile from './components/Profile/UserProfile';
 import ApiVault from './components/Vault/ApiVault';
 import FeedManager from './components/FeedManager/FeedManager';
+import ArchiveSearch from './components/Archive/ArchiveSearch';
 
 export default function App() {
-  const { ui, feeds, initDefaultFeeds, fetchAllFeeds, settings, computeStats } = useStore();
+  const { ui, stats, initDefaultFeeds, fetchAllFeeds, settings } = useStore();
 
   useEffect(() => {
     initDefaultFeeds();
-    computeStats();
     fetchAllFeeds();
   }, []);
 
@@ -35,7 +35,7 @@ export default function App() {
           <div className="text-center">
             <div className="font-display text-4xl font-bold text-brand mb-2">RSS COMMANDER</div>
             <div className="font-ui text-[var(--text-muted)] text-sm uppercase tracking-widest">Signal Intelligence Terminal</div>
-            <div className="mt-8 font-mono text-xs text-[var(--text-muted)]">{feeds.filter(f => f.enabled).length} feeds active</div>
+            <div className="mt-8 font-mono text-xs text-[var(--text-muted)]">{stats.enabledFeeds} feeds active</div>
           </div>
         </div>
       </div>
@@ -46,6 +46,7 @@ export default function App() {
     switch (ui.view) {
       case 'dashboard': return <FeedDashboard />;
       case 'feeds':     return <FeedManager />;
+      case 'archive':   return <ArchiveSearch />;
       case 'settings':  return <SettingsPanel />;
       case 'profile':   return <UserProfile />;
       case 'vault':     return <ApiVault />;

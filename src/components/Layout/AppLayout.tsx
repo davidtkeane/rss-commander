@@ -3,7 +3,7 @@ import clsx from 'clsx';
 import {
   LayoutDashboard, Database, KeyRound, Settings, User,
   RefreshCw, Search, Grid3X3, List, AlignJustify, ChevronLeft,
-  ChevronRight, Rss, ExternalLink, Star, Bookmark, Clock, X,
+  ChevronRight, Rss, ExternalLink, Star, Bookmark, Clock, X, Archive,
 } from 'lucide-react';
 import { useStore } from '../../store/useStore';
 import { CATEGORY_CONFIGS } from '../../types';
@@ -16,6 +16,7 @@ const NAV_ITEMS: { id: ViewMode; label: string; icon: React.ReactNode }[] = [
   { id: 'dashboard', label: 'Dashboard',    icon: <LayoutDashboard size={16} /> },
   { id: 'ticker',    label: 'Ticker View',  icon: <Rss size={16} /> },
   { id: 'feeds',     label: 'Feed Manager', icon: <Database size={16} /> },
+  { id: 'archive',   label: 'Archive',      icon: <Archive size={16} /> },
   { id: 'vault',     label: 'API Vault',    icon: <KeyRound size={16} /> },
   { id: 'settings',  label: 'Settings',     icon: <Settings size={16} /> },
   { id: 'profile',   label: 'Profile',      icon: <User size={16} /> },

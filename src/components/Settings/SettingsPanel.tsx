@@ -93,17 +93,43 @@ export default function SettingsPanel() {
             <Row label="Enable Ticker" desc="Show scrolling news bar at the top">
               <Toggle checked={settings.tickerEnabled} onChange={v => updateSettings({ tickerEnabled: v })} />
             </Row>
-            <Row label="Speed">
-              <div className="flex gap-1">
-                {(['slow', 'normal', 'fast', 'turbo'] as const).map(s => (
-                  <button key={s} onClick={() => updateSettings({ tickerSpeed: s })}
-                    className={clsx('px-3 py-1 rounded text-xs font-ui font-bold uppercase border transition-colors',
-                      settings.tickerSpeed === s ? 'bg-brand/10 border-brand/40 text-brand' : 'border-[var(--border)] text-[var(--text-muted)]')}>
-                    {s}
+            <div className="py-3 border-b border-[var(--border)]">
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <div className="font-ui font-semibold text-sm text-[var(--text-primary)]">Scroll Speed</div>
+                  <div className="font-ui text-xs text-[var(--text-muted)] mt-0.5">0 = gentle crawl · 100 = fast</div>
+                </div>
+                <span className="font-mono font-bold text-sm text-brand tabular-nums">
+                  {typeof settings.tickerSpeed === 'number' ? settings.tickerSpeed : 50}
+                </span>
+              </div>
+              <input
+                type="range"
+                min={0}
+                max={100}
+                step={1}
+                value={typeof settings.tickerSpeed === 'number' ? settings.tickerSpeed : 50}
+                onChange={e => updateSettings({ tickerSpeed: Number(e.target.value) })}
+                className="w-full accent-[var(--brand)] cursor-pointer h-1.5 mb-2"
+              />
+              {/* 4 stage markers */}
+              <div className="flex justify-between mt-1">
+                {([
+                  { label: 'Crawl', value: 0 },
+                  { label: 'Slow',  value: 33 },
+                  { label: 'Normal', value: 67 },
+                  { label: 'Fast',  value: 100 },
+                ] as const).map(({ label, value }) => (
+                  <button
+                    key={label}
+                    onClick={() => updateSettings({ tickerSpeed: value })}
+                    className="text-[10px] font-ui font-semibold uppercase tracking-wide text-[var(--text-muted)] hover:text-brand transition-colors"
+                  >
+                    {label}
                   </button>
                 ))}
               </div>
-            </Row>
+            </div>
             <Row label="Height">
               <div className="flex gap-1">
                 {(['sm', 'md', 'lg'] as const).map(h => (
