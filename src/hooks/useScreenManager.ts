@@ -53,9 +53,12 @@ export interface UseScreenManagerResult {
   launchPopout: (opts: LaunchOptions) => boolean; // false = popup blocked
   closePopout: () => void;
   focusPopout: () => void;
+  sendCommand: (type: string, payload?: unknown) => void;
 }
 
 // ── Hook ──────────────────────────────────────────────────────────────────────
+
+const BROADCAST_CHANNEL = 'rss-ticker-popout';
 
 export function useScreenManager(): UseScreenManagerResult {
   const supported = typeof window !== 'undefined' && 'getScreenDetails' in window;
@@ -65,7 +68,14 @@ export function useScreenManager(): UseScreenManagerResult {
   );
   const [screens, setScreens] = useState<ManagedScreen[]>([]);
   const [isPopoutOpen, setIsPopoutOpen] = useState(false);
-  const popoutRef = useRef<Window | null>(null);
+  const popoutRef  = useRef<Window | null>(null);
+  const channelRef = useRef<BroadcastChannel | null>(null);
+
+  // Open BroadcastChannel for sending commands to the popout
+  useEffect(() => {
+    channelRef.current = new BroadcastChannel(BROADCAST_CHANNEL);
+    return () => { channelRef.current?.close(); channelRef.current = null; };
+  }, []);
 
   // Detect external close (user closes the popout window directly)
   useEffect(() => {
@@ -145,11 +155,17 @@ export function useScreenManager(): UseScreenManagerResult {
     return true;
   }, [screens]);
 
+  const sendCommand = useCallback((type: string, payload?: unknown) => {
+    channelRef.current?.postMessage({ type, ...(payload ? { payload } : {}) });
+  }, []);
+
   const closePopout = useCallback(() => {
+    // Belt-and-suspenders: direct close + BroadcastChannel (survives page refresh)
     popoutRef.current?.close();
+    sendCommand('CLOSE');
     popoutRef.current = null;
     setIsPopoutOpen(false);
-  }, []);
+  }, [sendCommand]);
 
   const focusPopout = useCallback(() => {
     popoutRef.current?.focus();
@@ -164,5 +180,6 @@ export function useScreenManager(): UseScreenManagerResult {
     launchPopout,
     closePopout,
     focusPopout,
+    sendCommand,
   };
 }

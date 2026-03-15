@@ -45,12 +45,13 @@ export default function SettingsPanel() {
   const sm = useScreenManager();
 
   const launchPopout = () => {
-    const h = Math.round(settings.tickerPopoutFontSize * 2.6) + 2;
+    const rowH   = Math.round(settings.tickerPopoutFontSize * 2.6) + 2;
+    const totalH = rowH * (settings.tickerPopoutRows ?? 1);
     const ok = sm.launchPopout({
       url:         '/ticker.html',
       screenIndex: settings.tickerPopoutScreenIndex ?? -1,
       position:    settings.tickerPopoutPosition ?? 'bottom',
-      height:      h,
+      height:      totalH,
     });
     setPopupBlocked(!ok);
   };
@@ -59,6 +60,12 @@ export default function SettingsPanel() {
     const current = settings.tickerPopoutCategories ?? [];
     const next = current.includes(cat) ? current.filter(c => c !== cat) : [...current, cat];
     if (next.length > 0) updateSettings({ tickerPopoutCategories: next });
+  };
+
+  const togglePopoutCategory2 = (cat: RSSCategory) => {
+    const current = settings.tickerPopoutCategories2 ?? [];
+    const next = current.includes(cat) ? current.filter(c => c !== cat) : [...current, cat];
+    if (next.length > 0) updateSettings({ tickerPopoutCategories2: next });
   };
 
   const testProxy = async () => {
@@ -339,6 +346,41 @@ export default function SettingsPanel() {
               <Row label="Auto-fullscreen" desc="Requests fullscreen when the window opens">
                 <Toggle checked={settings.tickerPopoutAutoFullscreen ?? true} onChange={v => updateSettings({ tickerPopoutAutoFullscreen: v })} />
               </Row>
+
+              {/* Ticker rows */}
+              <Row label="Ticker rows" desc="Stack two independent feed rows in the popout">
+                <div className="flex gap-1">
+                  {([1, 2] as const).map(r => (
+                    <button key={r} onClick={() => updateSettings({ tickerPopoutRows: r })}
+                      className={clsx('px-3 py-1 rounded text-xs font-ui font-bold border transition-colors',
+                        (settings.tickerPopoutRows ?? 1) === r ? 'bg-brand/10 border-brand/40 text-brand' : 'border-[var(--border)] text-[var(--text-muted)]')}>
+                      {r}
+                    </button>
+                  ))}
+                </div>
+              </Row>
+
+              {/* Row 2 categories — only shown when rows=2 */}
+              {(settings.tickerPopoutRows ?? 1) === 2 && (
+                <div className="py-3 border-b border-[var(--border)]">
+                  <div className="font-ui font-semibold text-sm text-[var(--text-primary)] mb-1">Row 2 Categories</div>
+                  <div className="font-ui text-xs text-[var(--text-muted)] mb-3">Bottom row shows these feeds</div>
+                  <div className="flex flex-wrap gap-2">
+                    {Object.values(CATEGORY_CONFIGS).map(cfg => {
+                      const active = (settings.tickerPopoutCategories2 ?? []).includes(cfg.id);
+                      return (
+                        <button key={cfg.id} onClick={() => togglePopoutCategory2(cfg.id)}
+                          className={clsx('px-3 py-1.5 rounded text-xs font-ui font-bold uppercase tracking-wide border transition-all',
+                            active ? 'border-current' : 'border-[var(--border)] text-[var(--text-muted)] opacity-40'
+                          )}
+                          style={active ? { color: cfg.color, borderColor: `${cfg.color}50`, background: `${cfg.color}10` } : undefined}>
+                          {cfg.emoji} {cfg.shortName}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}

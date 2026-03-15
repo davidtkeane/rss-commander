@@ -71,7 +71,8 @@ export interface RSSSettings {
   tickerPopoutShowClock: boolean;
   tickerPopoutAutoFullscreen: boolean;
   tickerPopoutRows: 1 | 2;
-  tickerPopoutScreenIndex: number;     // -1 = primary, 0+ = screen index
+  tickerPopoutCategories2: RSSCategory[]; // Row 2 categories (used when rows=2)
+  tickerPopoutScreenIndex: number;        // -1 = primary, 0+ = screen index
 }
 
 export interface UserProfile {
@@ -183,6 +184,7 @@ export const DEFAULT_SETTINGS: RSSSettings = {
   tickerPopoutShowClock: true,
   tickerPopoutAutoFullscreen: true,
   tickerPopoutRows: 1,
+  tickerPopoutCategories2: ['malware', 'pentesting'],
   tickerPopoutScreenIndex: -1,
 };
 
