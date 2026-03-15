@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import clsx from 'clsx';
-import { CheckCircle2, XCircle, Loader2, RotateCcw, Download, Upload } from 'lucide-react';
+import { CheckCircle2, XCircle, Loader2, RotateCcw, Download, Upload, MonitorPlay, MonitorOff, Tv2 } from 'lucide-react';
 import { useStore } from '../../store/useStore';
 import { CATEGORY_CONFIGS } from '../../types';
 import type { RSSCategory } from '../../types';
@@ -40,6 +40,54 @@ export default function SettingsPanel() {
   const [tab, setTab] = useState<Tab>('ticker');
   const [proxyStatus, setProxyStatus] = useState<'idle' | 'testing' | 'ok' | 'error'>('idle');
   const [resetConfirm, setResetConfirm] = useState(false);
+  const [popupBlocked, setPopupBlocked] = useState(false);
+
+  // Popout window handle — not stored in Zustand (Window is not serialisable)
+  const popoutRef = useRef<Window | null>(null);
+  const [isPopoutOpen, setIsPopoutOpen] = useState(false);
+
+  // Poll to detect if the user closed the popout externally
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (popoutRef.current?.closed) {
+        popoutRef.current = null;
+        setIsPopoutOpen(false);
+      }
+    }, 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const launchPopout = () => {
+    if (popoutRef.current && !popoutRef.current.closed) {
+      popoutRef.current.focus();
+      return;
+    }
+    const h = Math.round(settings.tickerPopoutFontSize * 2.6) + 2;
+    const top = settings.tickerPopoutPosition === 'bottom'
+      ? window.screen.availHeight - h
+      : 0;
+    const win = window.open(
+      '/ticker.html',
+      'rss-ticker-popout',
+      `popup,width=${window.screen.availWidth},height=${h},left=0,top=${top}`
+    );
+    if (!win) { setPopupBlocked(true); return; }
+    setPopupBlocked(false);
+    popoutRef.current = win;
+    setIsPopoutOpen(true);
+  };
+
+  const closePopout = () => {
+    popoutRef.current?.close();
+    popoutRef.current = null;
+    setIsPopoutOpen(false);
+  };
+
+  const togglePopoutCategory = (cat: RSSCategory) => {
+    const current = settings.tickerPopoutCategories ?? [];
+    const next = current.includes(cat) ? current.filter(c => c !== cat) : [...current, cat];
+    if (next.length > 0) updateSettings({ tickerPopoutCategories: next });
+  };
 
   const testProxy = async () => {
     setProxyStatus('testing');
@@ -155,6 +203,127 @@ export default function SettingsPanel() {
                 onChange={e => updateSettings({ tickerMaxItems: Number(e.target.value) })}
                 className="cyber-input w-20 text-right" />
             </Row>
+
+            {/* ── Popout / TV Display ── */}
+            <div className="pt-4 pb-1">
+              <div className="flex items-center gap-2 mb-4">
+                <Tv2 size={14} className="text-brand" />
+                <span className="font-ui font-bold text-xs text-brand uppercase tracking-widest">Popout Display — TV / External Monitor</span>
+              </div>
+
+              {/* Launch / Close button */}
+              <div className="mb-4">
+                {popupBlocked && (
+                  <div className="mb-2 text-xs font-ui text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded px-3 py-2">
+                    Popup blocked — allow popups for localhost:5174 in your browser settings, then try again.
+                  </div>
+                )}
+                <div className="flex gap-2">
+                  <button
+                    onClick={launchPopout}
+                    className={clsx(
+                      'flex-1 flex items-center justify-center gap-2 py-2 rounded border font-ui font-semibold text-sm transition-colors',
+                      isPopoutOpen
+                        ? 'border-brand/40 bg-brand/10 text-brand hover:bg-brand/20'
+                        : 'border-[var(--border)] text-[var(--text-primary)] hover:border-brand/40 hover:text-brand'
+                    )}
+                  >
+                    {isPopoutOpen
+                      ? <><span className="w-2 h-2 rounded-full bg-brand animate-pulse" /> Ticker Window Open — Click to Focus</>
+                      : <><MonitorPlay size={14} /> Launch Ticker Window</>
+                    }
+                  </button>
+                  {isPopoutOpen && (
+                    <button onClick={closePopout} className="px-3 py-2 rounded border border-red-500/30 text-red-400 hover:bg-red-500/10 transition-colors" title="Close ticker window">
+                      <MonitorOff size={14} />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Position */}
+              <Row label="Screen position" desc="Where the ticker sits when not fullscreen">
+                <div className="flex gap-1">
+                  {(['top', 'bottom'] as const).map(p => (
+                    <button key={p} onClick={() => updateSettings({ tickerPopoutPosition: p })}
+                      className={clsx('px-3 py-1 rounded text-xs font-ui font-bold uppercase border transition-colors',
+                        settings.tickerPopoutPosition === p ? 'bg-brand/10 border-brand/40 text-brand' : 'border-[var(--border)] text-[var(--text-muted)]')}>
+                      {p}
+                    </button>
+                  ))}
+                </div>
+              </Row>
+
+              {/* Font size */}
+              <div className="py-3 border-b border-[var(--border)]">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="font-ui font-semibold text-sm text-[var(--text-primary)]">Font Size</div>
+                  <span className="font-mono font-bold text-sm text-brand">{settings.tickerPopoutFontSize}px</span>
+                </div>
+                <input type="range" min={14} max={48} step={1}
+                  value={settings.tickerPopoutFontSize}
+                  onChange={e => updateSettings({ tickerPopoutFontSize: Number(e.target.value) })}
+                  className="w-full accent-[var(--brand)] cursor-pointer h-1.5 mb-1" />
+                <div className="flex justify-between text-[10px] font-ui text-[var(--text-muted)]">
+                  <span>14px — compact</span><span>48px — across the room</span>
+                </div>
+              </div>
+
+              {/* Background */}
+              <Row label="Background">
+                <div className="flex gap-1">
+                  {([['black','Pure Black'],['dark','Dark'],['semi','Semi-transparent']] as const).map(([val, lbl]) => (
+                    <button key={val} onClick={() => updateSettings({ tickerPopoutBackground: val })}
+                      className={clsx('px-3 py-1 rounded text-xs font-ui font-bold uppercase border transition-colors',
+                        settings.tickerPopoutBackground === val ? 'bg-brand/10 border-brand/40 text-brand' : 'border-[var(--border)] text-[var(--text-muted)]')}>
+                      {lbl}
+                    </button>
+                  ))}
+                </div>
+              </Row>
+
+              {/* Opacity */}
+              <div className="py-3 border-b border-[var(--border)]">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="font-ui font-semibold text-sm text-[var(--text-primary)]">Opacity</div>
+                  <span className="font-mono font-bold text-sm text-brand">{Math.round((settings.tickerPopoutOpacity ?? 1) * 100)}%</span>
+                </div>
+                <input type="range" min={0.5} max={1} step={0.05}
+                  value={settings.tickerPopoutOpacity ?? 1}
+                  onChange={e => updateSettings({ tickerPopoutOpacity: Number(e.target.value) })}
+                  className="w-full accent-[var(--brand)] cursor-pointer h-1.5" />
+              </div>
+
+              {/* Categories — independent of main app */}
+              <div className="py-3 border-b border-[var(--border)]">
+                <div className="font-ui font-semibold text-sm text-[var(--text-primary)] mb-1">Popout Categories</div>
+                <div className="font-ui text-xs text-[var(--text-muted)] mb-3">Independent of the main app filter</div>
+                <div className="flex flex-wrap gap-2">
+                  {Object.values(CATEGORY_CONFIGS).map(cfg => {
+                    const active = (settings.tickerPopoutCategories ?? []).includes(cfg.id);
+                    return (
+                      <button key={cfg.id} onClick={() => togglePopoutCategory(cfg.id)}
+                        className={clsx('px-3 py-1.5 rounded text-xs font-ui font-bold uppercase tracking-wide border transition-all',
+                          active ? 'border-current' : 'border-[var(--border)] text-[var(--text-muted)] opacity-40'
+                        )}
+                        style={active ? { color: cfg.color, borderColor: `${cfg.color}50`, background: `${cfg.color}10` } : undefined}>
+                        {cfg.emoji} {cfg.shortName}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Show clock */}
+              <Row label="Show clock" desc="Large clock panel alongside the ticker">
+                <Toggle checked={settings.tickerPopoutShowClock ?? true} onChange={v => updateSettings({ tickerPopoutShowClock: v })} />
+              </Row>
+
+              {/* Auto-fullscreen */}
+              <Row label="Auto-fullscreen" desc="Requests fullscreen when the window opens">
+                <Toggle checked={settings.tickerPopoutAutoFullscreen ?? true} onChange={v => updateSettings({ tickerPopoutAutoFullscreen: v })} />
+              </Row>
+            </div>
           </div>
         )}
 

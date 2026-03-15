@@ -62,6 +62,16 @@ export interface RSSSettings {
   aiEnabled: boolean;
   aiProvider: 'openai' | 'anthropic' | 'ollama' | 'none';
   aiModel: string;
+  // Popout / TV ticker display
+  tickerPopoutFontSize: number;        // 14–48px, default 24
+  tickerPopoutBackground: 'black' | 'dark' | 'semi';
+  tickerPopoutOpacity: number;         // 0.7–1.0
+  tickerPopoutPosition: 'top' | 'bottom';
+  tickerPopoutCategories: RSSCategory[];
+  tickerPopoutShowClock: boolean;
+  tickerPopoutAutoFullscreen: boolean;
+  tickerPopoutRows: 1 | 2;
+  tickerPopoutScreenIndex: number;     // -1 = primary, 0+ = screen index
 }
 
 export interface UserProfile {
@@ -165,6 +175,15 @@ export const DEFAULT_SETTINGS: RSSSettings = {
   desktopNotifications: false, notifyCategories: ['malware', 'pentesting'],
   proxyUrl: 'http://localhost:3001',
   aiEnabled: false, aiProvider: 'none', aiModel: '',
+  tickerPopoutFontSize: 24,
+  tickerPopoutBackground: 'black',
+  tickerPopoutOpacity: 1,
+  tickerPopoutPosition: 'bottom',
+  tickerPopoutCategories: ['pentesting', 'malware', 'forensics', 'news', 'dataGov', 'blockchain'],
+  tickerPopoutShowClock: true,
+  tickerPopoutAutoFullscreen: true,
+  tickerPopoutRows: 1,
+  tickerPopoutScreenIndex: -1,
 };
 
 export const DEFAULT_FEEDS: Omit<RSSFeed, 'id' | 'lastFetched' | 'lastError' | 'itemCount'>[] = [
